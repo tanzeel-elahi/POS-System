@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
-
+from apps.customers.services import CustomerService
 from .models import Bill
 from .serializers import BillCreateSerializer, BillSerializer
 from .services import BillingService
@@ -11,7 +11,7 @@ from .services import BillingService
 
 class BillListCreateView(APIView):
     def get(self, request):
-        bills = Bill.objects.all()
+        bills = Bill.objects.prefetch_related('items')
         serializer = BillSerializer(bills, many=True)
         return Response(serializer.data)
 
@@ -36,3 +36,13 @@ class BillDetailView(APIView):
     def get(self, request, pk):
         bill = get_object_or_404(Bill, pk=pk)
         return Response(BillSerializer(bill).data)
+
+
+class CustomerBillHistoryView(APIView):
+    def get(self, request, customer_id):
+        customer = CustomerService.get_by_id(customer_id)
+        if not customer:
+            return Response({'detail': 'Customer not found'}, status=status.HTTP_404_NOT_FOUND)
+        bills = BillingService.get_customer_bills(customer)
+        return Response(BillSerializer(bills, many=True).data)
+       
