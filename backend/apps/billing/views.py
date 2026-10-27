@@ -22,12 +22,12 @@ class BillListCreateView(APIView):
 
         try:
             bill = BillingService.create_bill(
-                customer_id=data.get('customer_id'),
+                customer_phone=data.get('customer_phone'),
                 customer_name=data.get('customer_name', ''),
                 items=data['items'],
             )
         except ValidationError as e:
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(BillSerializer(bill).data, status=status.HTTP_201_CREATED)
 

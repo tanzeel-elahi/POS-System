@@ -9,4 +9,4 @@ class CustomerSerializer(serializers.ModelSerializer):
             'id', 'name', 'phone', 'email', 'address',
             'is_active', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'is_active', 'created_at', 'updated_at']

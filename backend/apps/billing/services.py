@@ -2,23 +2,20 @@ from decimal import Decimal
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from apps.products.models import Product
-from apps.customers.models import Customer
+from apps.customers.services import CustomerService
 from .models import Bill, BillItem
 
 
 class BillingService:
     @staticmethod
     @transaction.atomic
-    def create_bill(*, customer_id=None, customer_name='', items):
+    def create_bill(*, customer_phone=None, customer_name='', items):
         if not items:
             raise ValidationError("A bill must have at least one item.")
 
         customer = None
-        if customer_id:
-            try:
-                customer = Customer.objects.get(pk=customer_id, is_active=True)
-            except Customer.DoesNotExist:
-                raise ValidationError("Selected customer does not exist.")
+        if customer_phone:
+            customer = CustomerService.get_or_create_by_phone(phone=customer_phone, name=customer_name)
             customer_name = customer.name
 
         bill = Bill.objects.create(customer=customer, customer_name=customer_name)
@@ -75,3 +72,8 @@ class BillingService:
         bill.save(update_fields=['total_amount'])
 
         return bill
+
+
+    @staticmethod
+    def get_customer_bills(customer):
+       return customer.bills.all().prefetch_related('items').order_by('-created_at')

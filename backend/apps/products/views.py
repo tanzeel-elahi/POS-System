@@ -15,7 +15,8 @@ class ProductListCreateView(APIView):
 
         search = request.query_params.get('search')
         if search:
-            products = products.filter(name__icontains=search) | products.filter(sku__icontains=search)
+            products = products.filter(
+                name__icontains=search) | products.filter(sku__icontains=search)
 
         serializer = ProductSerializer(products, many=True)
         return Response(serializer.data)
@@ -25,9 +26,10 @@ class ProductListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
 
         try:
-            product = ProductService.create_product(**serializer.validated_data)
+            product = ProductService.create_product(
+                **serializer.validated_data)
         except ValidationError as e:
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(ProductSerializer(product).data, status=status.HTTP_201_CREATED)
 
@@ -51,7 +53,8 @@ class ProductDetailView(APIView):
 
     def patch(self, request, pk):
         product = self.get_object(pk)
-        serializer = ProductSerializer(product, data=request.data, partial=True)
+        serializer = ProductSerializer(
+            product, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         for key, value in serializer.validated_data.items():
             setattr(product, key, value)

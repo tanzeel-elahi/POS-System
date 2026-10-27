@@ -10,7 +10,7 @@ class BillItemInputSerializer(serializers.Serializer):
 
 
 class BillCreateSerializer(serializers.Serializer):
-    customer_id = serializers.IntegerField(required=False, allow_null=True)
+    customer_phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     customer_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
     items = BillItemInputSerializer(many=True)
 
