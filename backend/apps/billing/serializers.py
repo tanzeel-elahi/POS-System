@@ -12,6 +12,7 @@ class BillItemInputSerializer(serializers.Serializer):
 class BillCreateSerializer(serializers.Serializer):
     customer_phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     customer_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    payment_mode = serializers.ChoiceField(choices=Bill.PaymentMode.choices, default=Bill.PaymentMode.CASH, required=False)
     items = BillItemInputSerializer(many=True)
 
 
@@ -28,4 +29,19 @@ class BillSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Bill
-        fields = ['id', 'customer', 'customer_name', 'total_amount', 'created_at', 'items']
+        fields = ['id', 'customer', 'customer_name', 'total_amount', 'created_at', 'items','payment_mode', 'payment_proof']
+
+
+
+class PaymentProofSerializer(serializers.Serializer):
+    payment_proof = serializers.ImageField()
+
+    def validate_payment_proof(self, file):
+        max_size = 5 * 1024 * 1024  # 5 MB
+
+        if file.size > max_size:
+            raise serializers.ValidationError(
+                "Image must be under 5 MB."
+            )
+
+        return file
