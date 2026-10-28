@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from apps.products.models import Product
 from apps.customers.services import CustomerService
 from .models import Bill, BillItem
+from apps.credit.services import CreditService
 
 
 class BillingService:
@@ -78,6 +79,9 @@ class BillingService:
 
         bill.total_amount = total
         bill.save(update_fields=['total_amount'])
+
+        if payment_mode == Bill.PaymentMode.CREDIT and total > Decimal('0'):
+            CreditService.record_sale(customer=customer, bill=bill, amount=total)
 
         return bill
 
