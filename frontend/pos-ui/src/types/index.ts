@@ -1,3 +1,5 @@
+export type PaymentMode = 'cash' | 'credit' | 'online';
+
 export interface PaginatedResponse<T> {
   data: T[];
   total: number;
@@ -56,6 +58,8 @@ export interface Bill {
   totalAmount: number;
   createdAt: string;
   items: BillItem[];
+  paymentMode: PaymentMode;
+  paymentProof: string | null;
 }
 
 export interface BillItemInput {
@@ -66,7 +70,22 @@ export interface BillItemInput {
 }
 
 export interface BillCreatePayload {
-  customerId?: string;
-  customerName?: string; // walk-in / new customer
+  customerPhone?: string; // omit for walk-in
+  customerName?: string; 
+  paymentMode: PaymentMode;
   items: BillItemInput[];
+}
+
+export interface CreditEntry {
+  id: string;
+  entryType: 'sale' | 'repayment';
+  amount: number;
+  bill: string | null;
+  note: string;
+  createdAt: string;
+}
+
+export interface CreditSummary {
+  balance: number;
+  entries: CreditEntry[];
 }

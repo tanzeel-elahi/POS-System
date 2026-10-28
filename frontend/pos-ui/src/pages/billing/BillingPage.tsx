@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { App, AutoComplete, Button, Card, Col, Descriptions, Flex, Input, InputNumber, Row, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, App, AutoComplete, Button, Card, Col, Descriptions, Flex, Input, InputNumber, Row, Segmented, Space, Table, Tag, Typography, Upload } from 'antd';
 import type { TableColumnsType } from 'antd';
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, LoadingOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ProductService } from '@services/productService';
 import { CustomerService } from '@services/customerService';
 import { BillingService } from '@services/billingService';
+import { CreditService } from '@services/creditService';
 import { useDebounce } from '@/utils/useDebounce';
-import type { Bill, Customer } from '@/types';
+import { getApiError } from '@/utils/apiError';
+import type { Bill, Customer, PaymentMode } from '@/types';
 import { BillReceiptModal } from './BillReceiptModal';
 
 interface Row {
@@ -28,6 +30,9 @@ type Focusable = { focus: () => void } | null;
 const PRODUCT_PREFIX = '\u200Bp:';
 const CUSTOM_VALUE = '\u200Bcustom';
 
+const MIN_PHONE_DIGITS = 7; // customer lookup starts at this many digits — adjust to your numbering
+const MAX_PROOF_MB = 5;
+
 let rowSeq = 0;
 const newRow = (): Row => ({ key: `r-${++rowSeq}`, committed: false, isCustom: false, name: '', unitPrice: null, quantity: 1 });
 const blankRow = (r: Row): Row => ({ ...newRow(), key: r.key });
@@ -44,20 +49,21 @@ const withTrailing = (rows: Row[]): Row[] => {
 
 const money = (n: number) => n.toFixed(2);
 
-// Django's str(ValidationError) looks like "['message']" — strip that wrapper.
-const cleanMsg = (s: string) => s.replace(/^\[['"]/, '').replace(/['"]\]$/, '');
-
 export const BillingPage = () => {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
 
   const [rows, setRows] = useState<Row[]>(() => [newRow()]);
-  const [customerMode, setCustomerMode] = useState<'existing' | 'walkin'>('existing');
-  const [customer, setCustomer] = useState<Customer | null>(null);
-  const [walkInName, setWalkInName] = useState('');
   const [search, setSearch] = useState('');
-  const [customerSearch, setCustomerSearch] = useState('');
   const [receipt, setReceipt] = useState<Bill | null>(null);
+
+  // customer + payment
+  const [phone, setPhone] = useState('');
+  const [customerName, setCustomerName] = useState(''); // new customer (required) or walk-in (optional)
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>('cash');
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofFailure, setProofFailure] = useState<{ billId: string; file: File } | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
   /* ---------- focus management ---------- */
 
@@ -66,7 +72,6 @@ export const BillingPage = () => {
   const focusField = (rowKey: string, field: 'item' | 'price' | 'qty') => {
     pendingFocus.current = `${rowKey}:${field}`;
   };
-  // Runs after every render: focuses the field requested by the last action (the row exists by now).
   useEffect(() => {
     if (pendingFocus.current) {
       refs.current[pendingFocus.current]?.focus();
@@ -74,11 +79,10 @@ export const BillingPage = () => {
     }
   });
 
-  /* ---------- queries (keys share the entity prefix, so one invalidate covers them) ---------- */
+  /* ---------- product search ---------- */
 
   const q = search.trim();
   const debouncedQ = useDebounce(q, 200);
-  const debouncedCustomer = useDebounce(customerSearch);
 
   const productsQuery = useQuery({
     queryKey: ['products', 'billing-search', debouncedQ],
@@ -86,14 +90,7 @@ export const BillingPage = () => {
     enabled: debouncedQ.length > 0,
   });
 
-  const customersQuery = useQuery({
-    queryKey: ['customers', 'billing-search', debouncedCustomer],
-    queryFn: () => CustomerService.getCustomers({ search: debouncedCustomer || undefined, take: 10 }),
-    enabled: customerMode === 'existing' && !customer,
-  });
-
   const products = productsQuery.data?.data ?? [];
-  // While the search is still catching up with typing, show no options so Enter can't pick a stale result.
   const searchPending = q !== debouncedQ || productsQuery.isFetching;
 
   const itemOptions = (() => {
@@ -126,6 +123,59 @@ export const BillingPage = () => {
     return opts;
   })();
 
+  /* ---------- customer lookup by phone ---------- */
+
+  const phoneTrim = phone.trim();
+  const phoneDigits = phoneTrim.replace(/\D/g, '');
+  const debouncedPhone = useDebounce(phoneTrim, 500);
+  const lookupEnabled = debouncedPhone.replace(/\D/g, '').length >= MIN_PHONE_DIGITS;
+
+  const lookupQuery = useQuery({
+    queryKey: ['customers', 'lookup', debouncedPhone],
+    queryFn: () => CustomerService.lookupByPhone(debouncedPhone),
+    enabled: lookupEnabled,
+  });
+
+  // The lookup result only counts once it matches what is currently typed.
+  const lookupSettled = lookupEnabled && phoneTrim === debouncedPhone && !lookupQuery.isFetching && lookupQuery.data !== undefined;
+  const foundCustomer: Customer | null = lookupSettled ? (lookupQuery.data ?? null) : null;
+  const isNewCustomer = lookupSettled && lookupQuery.data === null;
+  const lookupBusy = phoneDigits.length >= MIN_PHONE_DIGITS && !lookupSettled;
+
+  const creditQuery = useQuery({
+    queryKey: ['customers', foundCustomer?.id, 'credit'],
+    queryFn: () => CreditService.getCredit(foundCustomer!.id),
+    enabled: !!foundCustomer,
+  });
+  const balance = creditQuery.data?.balance ?? 0;
+
+
+  /* ---------- phone / name suggestions (partial search) ---------- */
+
+  // If the text looks like a phone number, strip spaces/dashes the same way the server does when storing.
+  const suggestTerm = /^[\d\s+\-()]+$/.test(phoneTrim) ? phoneTrim.replace(/[\s\-()]/g, '') : phoneTrim;
+  const debouncedSuggest = useDebounce(suggestTerm, 250);
+
+  const suggestQuery = useQuery({
+    queryKey: ['customers', 'billing-search', debouncedSuggest],
+    queryFn: () => CustomerService.getCustomers({ search: debouncedSuggest, take: 8 }),
+    enabled: debouncedSuggest.length >= 2 && !foundCustomer,
+  });
+
+  // Hide suggestions while the search catches up with typing, and once an exact customer is found.
+  const suggestPending = suggestTerm !== debouncedSuggest || suggestQuery.isFetching;
+  const customerOptions =
+    foundCustomer || suggestPending || suggestTerm.length < 2
+      ? []
+      : (suggestQuery.data?.data ?? []).map((c) => ({
+        value: c.phone, // selecting fills the phone field, and the exact lookup then runs
+        label: (
+          <Flex justify="space-between" gap={12}>
+            <span>{c.name}</span>
+            <Typography.Text type="secondary">{c.phone}</Typography.Text>
+          </Flex>
+        ),
+      }));
   /* ---------- row actions ---------- */
 
   const onItemText = (key: string, text: string) => {
@@ -135,7 +185,6 @@ export const BillingPage = () => {
         prev.map((r) => {
           if (r.key !== key) return r;
           if (r.committed && r.name === text) return r;
-          // Any edit to the text turns the row back into an uncommitted search
           return { ...r, name: text, committed: false, isCustom: false, productId: undefined, sku: undefined, unitPrice: null, maxQty: undefined };
         }),
       ),
@@ -146,7 +195,6 @@ export const BillingPage = () => {
     const current = rows.find((r) => r.key === key);
     if (!current) return;
 
-    // --- custom item ---
     if (value === CUSTOM_VALUE) {
       const name = current.name.trim();
       if (!name) return;
@@ -163,7 +211,6 @@ export const BillingPage = () => {
       return;
     }
 
-    // --- catalog product ---
     const product = products.find((p) => p.id === value.slice(PRODUCT_PREFIX.length));
     if (!product) return;
     if (product.stockQuantity <= 0) {
@@ -171,7 +218,6 @@ export const BillingPage = () => {
       return;
     }
 
-    // Already on the bill? Bump that row instead of adding a duplicate.
     const dup = rows.find((r) => r.productId === product.id && r.key !== key);
     if (dup) {
       if (dup.quantity + 1 > product.stockQuantity) {
@@ -195,16 +241,16 @@ export const BillingPage = () => {
         prev.map((r) =>
           r.key === key
             ? {
-                ...r,
-                name: product.name,
-                committed: true,
-                isCustom: false,
-                productId: product.id,
-                sku: product.sku,
-                unitPrice: product.price,
-                quantity: 1,
-                maxQty: product.stockQuantity,
-              }
+              ...r,
+              name: product.name,
+              committed: true,
+              isCustom: false,
+              productId: product.id,
+              sku: product.sku,
+              unitPrice: product.price,
+              quantity: 1,
+              maxQty: product.stockQuantity,
+            }
             : r,
         ),
       ),
@@ -234,7 +280,7 @@ export const BillingPage = () => {
     if (next) focusField(next.key, 'item');
   };
 
-  /* ---------- totals / submit ---------- */
+  /* ---------- totals ---------- */
 
   const committedRows = rows.filter((r) => r.committed);
   const total = committedRows.reduce((sum, r) => sum + (r.unitPrice ?? 0) * r.quantity, 0);
@@ -242,39 +288,52 @@ export const BillingPage = () => {
 
   const resetBill = () => {
     setRows([newRow()]);
-    setCustomer(null);
-    setWalkInName('');
-    setCustomerSearch('');
     setSearch('');
-    focusField(rows[0]?.key ?? '', 'item');
+    setPhone('');
+    setCustomerName('');
+    setPaymentMode('cash');
+    setProofFile(null);
   };
 
+  /* ---------- submit ---------- */
+
   const createMutation = useMutation({
-    mutationFn: () =>
-      BillingService.createBill({
-        customerId: customerMode === 'existing' && customer ? customer.id : undefined,
-        customerName: customerMode === 'walkin' ? walkInName.trim() : undefined,
+    mutationFn: async () => {
+      const bill = await BillingService.createBill({
+        customerPhone: phoneTrim || undefined,
+        // existing customers keep their stored name; send a name only for new customers / walk-ins
+        customerName: foundCustomer ? undefined : customerName.trim() || undefined,
+        paymentMode,
         items: committedRows.map((r) => ({
           productId: r.productId,
           name: r.productId ? undefined : r.name,
           unitPrice: r.productId ? undefined : (r.unitPrice ?? undefined),
           quantity: r.quantity,
         })),
-      }),
-    onSuccess: (bill) => {
+      });
+
+      // Step 2: the bill exists now. A failed upload must NOT look like a failed bill.
+      let finalBill = bill;
+      let proofFailed = false;
+      if (paymentMode === 'online' && proofFile) {
+        try {
+          finalBill = await BillingService.uploadPaymentProof(bill.id, proofFile);
+        } catch {
+          proofFailed = true;
+        }
+      }
+      return { bill: finalBill, proofFailed, file: proofFile };
+    },
+    onSuccess: ({ bill, proofFailed, file }) => {
       setReceipt(bill);
-      setRows([newRow()]);
-      setCustomer(null);
-      setWalkInName('');
-      setSearch('');
-      // Stock changed on the server — one prefix refreshes the products page AND the billing search.
+      setProofFailure(proofFailed && file ? { billId: bill.id, file } : null);
+      resetBill();
+      // Stock, customers (new customer / credit balance / history) all changed.
       queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
     },
     onError: (e: any) => {
-      const data = e?.response?.data;
-      if (data?.detail) message.error(cleanMsg(String(data.detail)));
-      else if (data && typeof data === 'object') message.error(JSON.stringify(data));
-      else message.error('Failed to create bill');
+      message.error(getApiError(e, 'Failed to create bill'));
       queryClient.invalidateQueries({ queryKey: ['products'] }); // stock may have changed since we loaded it
     },
   });
@@ -292,7 +351,45 @@ export const BillingPage = () => {
       focusField(noPrice.key, 'price');
       return;
     }
+    if (paymentMode === 'credit' && !phoneTrim) {
+      message.error('Credit bills need a customer phone number');
+      return;
+    }
+    if (phoneTrim) {
+      if (phoneDigits.length < MIN_PHONE_DIGITS) {
+        message.warning('Enter the full phone number');
+        return;
+      }
+      if (!lookupSettled) {
+        message.warning('Wait for the customer lookup to finish');
+        return;
+      }
+      if (isNewCustomer && !customerName.trim()) {
+        message.error("Enter the new customer's name");
+        return;
+      }
+    }
+    // PLACEHOLDER rule — the API doc left "credit bills with a total of 0" undecided. Remove once decided.
+    if (paymentMode === 'credit' && total <= 0) {
+      message.error('A credit bill must have a total above 0');
+      return;
+    }
     createMutation.mutate();
+  };
+
+  const handleRetryProof = async () => {
+    if (!proofFailure) return;
+    setRetrying(true);
+    try {
+      const updated = await BillingService.uploadPaymentProof(proofFailure.billId, proofFailure.file);
+      setReceipt(updated);
+      setProofFailure(null);
+      message.success('Proof uploaded');
+    } catch (e) {
+      message.error(getApiError(e, 'Upload failed again'));
+    } finally {
+      setRetrying(false);
+    }
   };
 
   /* ---------- table ---------- */
@@ -430,63 +527,128 @@ export const BillingPage = () => {
           </Card>
         </Col>
 
-        {/* ---------- right: customer + summary ---------- */}
+        {/* ---------- right: customer + payment + summary ---------- */}
         <Col xs={24} lg={8}>
           <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
             <Card title="Customer">
-              <Segmented
-                block
-                value={customerMode}
-                onChange={(v) => {
-                  setCustomerMode(v as 'existing' | 'walkin');
-                  setCustomer(null);
-                  setWalkInName('');
-                }}
-                options={[
-                  { label: 'Existing', value: 'existing' },
-                  { label: 'New / Walk-in', value: 'walkin' },
-                ]}
-                style={{ marginBottom: 12 }}
-              />
+              <AutoComplete
+                style={{ width: '100%' }}
+                value={phone}
+                options={customerOptions}
+                filterOption={false}
+                defaultActiveFirstOption={false}
+                onChange={(text) => setPhone(text)}
+                onSelect={(value) => setPhone(value)}
+              >
+                <Input
+                  allowClear
+                  maxLength={20}
+                  placeholder="Phone or name (leave empty for walk-in)"
+                  suffix={lookupBusy ? <LoadingOutlined /> : undefined}
+                />
+              </AutoComplete>
 
-              {customerMode === 'existing' ? (
-                customer ? (
+              <div style={{ marginTop: 12 }}>
+                {!phoneTrim && (
+                  <Input
+                    placeholder="Customer name (optional, walk-in)"
+                    value={customerName}
+                    maxLength={200}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                  />
+                )}
+
+                {phoneTrim && phoneDigits.length < MIN_PHONE_DIGITS && (
+                  <Typography.Text type="secondary">Pick a suggestion, or enter the full phone number.</Typography.Text>
+                )}
+
+                {foundCustomer && (
                   <>
                     <Descriptions column={1} size="small">
-                      <Descriptions.Item label="Name">{customer.name}</Descriptions.Item>
-                      <Descriptions.Item label="Phone">{customer.phone}</Descriptions.Item>
-                      <Descriptions.Item label="Email">{customer.email || '-'}</Descriptions.Item>
-                      <Descriptions.Item label="Address">{customer.address || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="Name">{foundCustomer.name}</Descriptions.Item>
+                      <Descriptions.Item label="Phone">{foundCustomer.phone}</Descriptions.Item>
+                      <Descriptions.Item label="Email">{foundCustomer.email || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="Address">{foundCustomer.address || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="Credit">
+                        {creditQuery.isLoading ? (
+                          <LoadingOutlined />
+                        ) : balance > 0 ? (
+                          <Tag color="red">Owes {money(balance)}</Tag>
+                        ) : (
+                          <Tag color="green">No balance</Tag>
+                        )}
+                      </Descriptions.Item>
                     </Descriptions>
-                    <Button size="small" onClick={() => setCustomer(null)}>Change</Button>
+                    {paymentMode === 'credit' && total > 0 && (
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        Balance after this bill: {money(balance + total)}
+                      </Typography.Text>
+                    )}
                   </>
-                ) : (
-                  <Select
-                    showSearch
-                    value={null}
-                    placeholder="Search customer by name or phone..."
-                    filterOption={false}
-                    onSearch={setCustomerSearch}
-                    onSelect={(id) => {
-                      const c = customersQuery.data?.data.find((x) => x.id === id);
-                      if (c) setCustomer(c);
+                )}
+
+                {isNewCustomer && (
+                  <>
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 8 }}
+                      message="New customer — they'll be created with this bill"
+                    />
+                    <Input
+                      placeholder="Customer name (required)"
+                      value={customerName}
+                      maxLength={200}
+                      status={!customerName.trim() ? 'warning' : undefined}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                    />
+                  </>
+                )}
+              </div>
+            </Card>
+
+            <Card title="Payment">
+              <Segmented
+                block
+                value={paymentMode}
+                onChange={(v) => {
+                  setPaymentMode(v as PaymentMode);
+                  if (v !== 'online') setProofFile(null);
+                }}
+                options={[
+                  { label: 'Cash', value: 'cash' },
+                  { label: 'Credit', value: 'credit' },
+                  { label: 'Online', value: 'online' },
+                ]}
+              />
+
+              {paymentMode === 'credit' && !phoneTrim && (
+                <Alert type="warning" showIcon style={{ marginTop: 12 }} message="Credit needs a customer phone number" />
+              )}
+
+              {paymentMode === 'online' && (
+                <div style={{ marginTop: 12 }}>
+                  <Upload
+                    accept="image/*"
+                    maxCount={1}
+                    fileList={proofFile ? [{ uid: '-1', name: proofFile.name, status: 'done' as const }] : []}
+                    beforeUpload={(file) => {
+                      if (!file.type.startsWith('image/')) {
+                        message.error('Please choose an image file');
+                        return Upload.LIST_IGNORE;
+                      }
+                      if (file.size > MAX_PROOF_MB * 1024 * 1024) {
+                        message.error(`Image must be under ${MAX_PROOF_MB} MB`);
+                        return Upload.LIST_IGNORE;
+                      }
+                      setProofFile(file);
+                      return false; // keep it local; we upload after the bill is created
                     }}
-                    loading={customersQuery.isFetching}
-                    style={{ width: '100%' }}
-                    notFoundContent="No customers found"
-                    options={(customersQuery.data?.data ?? []).map((c) => ({
-                      value: c.id,
-                      label: `${c.name} · ${c.phone}`,
-                    }))}
-                  />
-                )
-              ) : (
-                <Input
-                  placeholder="Customer name (optional)"
-                  value={walkInName}
-                  maxLength={200}
-                  onChange={(e) => setWalkInName(e.target.value)}
-                />
+                    onRemove={() => setProofFile(null)}
+                  >
+                    <Button icon={<UploadOutlined />}>Payment proof (optional)</Button>
+                  </Upload>
+                </div>
               )}
             </Card>
 
@@ -509,7 +671,7 @@ export const BillingPage = () => {
               >
                 Generate Bill
               </Button>
-              {committedRows.length > 0 && (
+              {(committedRows.length > 0 || phoneTrim) && (
                 <Button block style={{ marginTop: 8 }} onClick={resetBill}>
                   Clear
                 </Button>
@@ -519,7 +681,16 @@ export const BillingPage = () => {
         </Col>
       </Row>
 
-      <BillReceiptModal bill={receipt} onClose={() => setReceipt(null)} />
+      <BillReceiptModal
+        bill={receipt}
+        proofFailed={!!proofFailure}
+        retrying={retrying}
+        onRetryProof={handleRetryProof}
+        onClose={() => {
+          setReceipt(null);
+          setProofFailure(null);
+        }}
+      />
     </Space>
   );
 };

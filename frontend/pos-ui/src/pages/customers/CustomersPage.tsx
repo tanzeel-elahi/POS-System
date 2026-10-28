@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { App, Button, Card, Dropdown, Flex, Input, Space, Tag, Typography } from 'antd';
+import { App, Button, Card, Dropdown, Flex, Input, Space, Typography } from 'antd';
 import type { TableColumnsType, TableProps } from 'antd';
-import { DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined, EyeOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GenericTable } from '@components/GenericTable';
 import { DeleteConfirmModal } from '@components/DeleteConfirmModal';
@@ -9,6 +9,7 @@ import { CustomerService } from '@services/customerService';
 import { DEFAULT_PAGE_SIZE } from '@/utils/constants';
 import type { Customer } from '@/types';
 import { CustomerFormModal } from './CustomerFormModal';
+import { CustomerDetailsDrawer } from './CustomerDetailsDrawer';
 
 export const CustomersPage = () => {
   const queryClient = useQueryClient();
@@ -21,6 +22,7 @@ export const CustomersPage = () => {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState<Customer | null>(null);
+  const [viewing, setViewing] = useState<Customer | null>(null);
 
   const query = useQuery({
     queryKey: ['customers', pagination, search, sortField, sortOrder],
@@ -63,6 +65,7 @@ export const CustomersPage = () => {
           trigger={['click']}
           menu={{
             items: [
+              { key: 'details', icon: <EyeOutlined />, label: 'Credit & bills', onClick: () => setViewing(record) },
               { key: 'edit', icon: <EditOutlined />, label: 'Edit', onClick: () => { setEditing(record); setFormOpen(true); } },
               { key: 'delete', icon: <DeleteOutlined />, label: 'Delete', danger: true, onClick: () => setDeleting(record) },
             ],
@@ -124,6 +127,8 @@ export const CustomersPage = () => {
         onCancel={() => setDeleting(null)}
         onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
       />
+
+      <CustomerDetailsDrawer customer={viewing} onClose={() => setViewing(null)} />
     </Space>
   );
 };
