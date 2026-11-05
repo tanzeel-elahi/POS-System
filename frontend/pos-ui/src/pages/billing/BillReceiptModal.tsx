@@ -8,12 +8,13 @@ interface Props {
   retrying: boolean;
   onRetryProof: () => void;
   onClose: () => void;
+  closeLabel?: string;
 }
 
 const money = (n: number) => n.toFixed(2);
 const MODE_COLOR = { cash: 'green', credit: 'orange', online: 'blue' } as const;
 
-export const BillReceiptModal = ({ bill, proofFailed, retrying, onRetryProof, onClose }: Props) => (
+export const BillReceiptModal = ({ bill, proofFailed, retrying, onRetryProof, onClose, closeLabel = 'New bill' }: Props) => (
   <Modal
     title={bill ? `Bill #${bill.id}` : 'Bill'}
     open={!!bill}
@@ -24,8 +25,8 @@ export const BillReceiptModal = ({ bill, proofFailed, retrying, onRetryProof, on
         Print
       </Button>,
       <Button key="new" type="primary" onClick={onClose}>
-        New bill
-      </Button>,
+        {closeLabel}
+      </Button>
     ]}
   >
     <style>{`

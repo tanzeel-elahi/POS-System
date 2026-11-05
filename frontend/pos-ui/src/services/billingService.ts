@@ -47,4 +47,8 @@ export class BillingService {
     const res = await client.get(`/customers/${customerId}/bills/`);
     return (res.data as any[]).map(normalizeBill);
   }
+  
+    static async getBill(id: string): Promise<Bill> {
+    return normalizeBill((await client.get(`${BILLS_URL}${id}/`)).data);
+  }
 }

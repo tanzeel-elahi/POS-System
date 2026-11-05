@@ -1,4 +1,4 @@
-export type PaymentMode = 'cash' | 'credit' | 'online';
+export type PaymentMode = "cash" | "credit" | "online";
 
 export interface PaginatedResponse<T> {
   data: T[];
@@ -41,7 +41,10 @@ export interface Customer extends Audit {
   address?: string;
   isActive: boolean;
 }
-export type CustomerPayload = Pick<Customer, 'name' | 'phone' | 'email' | 'address'>;
+export type CustomerPayload = Pick<
+  Customer,
+  "name" | "phone" | "email" | "address"
+>;
 export interface BillItem {
   id: string;
   product: string | null;
@@ -71,14 +74,14 @@ export interface BillItemInput {
 
 export interface BillCreatePayload {
   customerPhone?: string; // omit for walk-in
-  customerName?: string; 
+  customerName?: string;
   paymentMode: PaymentMode;
   items: BillItemInput[];
 }
 
 export interface CreditEntry {
   id: string;
-  entryType: 'sale' | 'repayment';
+  entryType: "sale" | "repayment";
   amount: number;
   bill: string | null;
   note: string;
@@ -88,4 +91,24 @@ export interface CreditEntry {
 export interface CreditSummary {
   balance: number;
   entries: CreditEntry[];
+}
+
+export interface StatementEntry {
+  id: string;
+  createdAt: string;
+  entryType: "sale" | "repayment";
+  bill: string | null;
+  note: string;
+  amount: number;
+  runningBalance: number;
+}
+
+export interface CreditStatement {
+  customer: { id: string; name: string; phone: string };
+  period: { startDate: string | null; endDate: string | null };
+  openingBalance: number;
+  totalCharges: number;
+  totalPayments: number;
+  closingBalance: number;
+  entries: StatementEntry[];
 }

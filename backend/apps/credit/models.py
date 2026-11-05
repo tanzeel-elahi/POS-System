@@ -40,6 +40,12 @@ class CreditEntry(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+        models.Index(
+            fields=['customer', 'created_at'],
+            name='credit_cust_created_idx',
+        ),
+    ]
         constraints = [
             models.CheckConstraint(
                 condition=Q(amount__gt=0),
