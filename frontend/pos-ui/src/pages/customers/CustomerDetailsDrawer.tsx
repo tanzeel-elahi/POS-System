@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Alert, App, Button, Descriptions, Drawer, Flex, Form, Input, InputNumber, Modal, Space, Statistic, Table, Tabs, Tag } from 'antd';
-import type { TableColumnsType } from 'antd';
+import { TableColumnsType, Alert, App, Button, Descriptions, Drawer, Spin, Form, Input, InputNumber, Modal, Space, Table, Tabs, Tag, Flex, Statistic } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BillingService } from '@services/billingService';
 import { CreditService } from '@services/creditService';
 import { getApiError } from '@/utils/apiError';
 import type { Bill, CreditEntry, Customer } from '@/types';
 import { CreditStatementModal } from './CreditStatementModal';
+import { CustomerService } from '@services/customerService';
+import { formatCnic } from '@/utils/format';
 
 const money = (n: number) => n.toFixed(2);
 const MODE_COLOR = { cash: 'green', credit: 'orange', online: 'blue' } as const;
@@ -51,19 +52,27 @@ const CreditTab = ({ customer }: { customer: Customer }) => {
 
     return (
         <>
-            <Space>
-                <Button onClick={() => setStatementOpen(true)}>E-statement</Button>
-                <Button
-                    type="primary"
-                    disabled={balance <= 0}
-                    onClick={() => {
-                        form.resetFields();
-                        setRepayOpen(true);
-                    }}
-                >
-                    Record repayment
-                </Button>
-            </Space>
+            <Flex justify="space-between" align="center" style={{ marginBottom: 16 }}>
+                <Statistic
+                    title="Outstanding balance"
+                    value={balance}
+                    precision={2}
+                    valueStyle={{ color: balance > 0 ? '#cf1322' : '#3f8600' }}
+                />
+                <Space>
+                    <Button onClick={() => setStatementOpen(true)}>E-statement</Button>
+                    <Button
+                        type="primary"
+                        disabled={balance <= 0}
+                        onClick={() => {
+                            form.resetFields();
+                            setRepayOpen(true);
+                        }}
+                    >
+                        Record repayment
+                    </Button>
+                </Space>
+            </Flex>
 
             <Table<CreditEntry>
                 size="small"
@@ -158,6 +167,44 @@ const BillsTab = ({ customer }: { customer: Customer }) => {
     );
 };
 
+/* ---------------- Profile tab ---------------- */
+
+const ProfileTab = ({ customer }: { customer: Customer }) => {
+    const q = useQuery({
+        queryKey: ['customers', 'detail', customer.id],
+        queryFn: () => CustomerService.getCustomer(customer.id),
+        gcTime: 0, // sensitive fields: don't keep them cached
+    });
+    const d = q.data;
+    const orDash = (v?: string | null) => v || '-';
+    const amount = (v: number | null | undefined) => (v != null ? money(v) : '-');
+
+    if (q.isError) return <Alert type="error" showIcon message={getApiError(q.error, 'Failed to load profile')} />;
+
+    return (
+        <Spin spinning={q.isLoading}>
+            {d && (
+                <Descriptions bordered column={2} size="small">
+                    <Descriptions.Item label="Phone">{d.phone}</Descriptions.Item>
+                    <Descriptions.Item label="Alternate phone">{orDash(d.alternatePhone)}</Descriptions.Item>
+                    <Descriptions.Item label="Email">{orDash(d.email)}</Descriptions.Item>
+                    <Descriptions.Item label="City">{orDash(d.city)}</Descriptions.Item>
+                    <Descriptions.Item label="Address" span={2}>{orDash(d.address)}</Descriptions.Item>
+                    <Descriptions.Item label="Occupation">{orDash(d.occupation)}</Descriptions.Item>
+                    <Descriptions.Item label="Employer">{orDash(d.employer)}</Descriptions.Item>
+                    <Descriptions.Item label="Monthly salary">{amount(d.monthlySalary)}</Descriptions.Item>
+                    <Descriptions.Item label="Credit limit">{amount(d.creditLimit)}</Descriptions.Item>
+                    <Descriptions.Item label="CNIC">{d.cnic ? formatCnic(d.cnic) : '-'}</Descriptions.Item>
+                    <Descriptions.Item label="Manager">{orDash(d.managerName)}</Descriptions.Item>
+                    <Descriptions.Item label="Notes" span={2}>{orDash(d.notes)}</Descriptions.Item>
+                    <Descriptions.Item label="Created">{new Date(d.createdAt).toLocaleString()}</Descriptions.Item>
+                    <Descriptions.Item label="Updated">{new Date(d.updatedAt).toLocaleString()}</Descriptions.Item>
+                </Descriptions>
+            )}
+        </Spin>
+    );
+};
+
 /* ---------------- Drawer ---------------- */
 
 interface Props {
@@ -180,6 +227,7 @@ export const CustomerDetailsDrawer = ({ customer, onClose }: Props) => (
                     items={[
                         { key: 'credit', label: 'Credit', children: <CreditTab customer={customer} /> },
                         { key: 'bills', label: 'Bills', children: <BillsTab customer={customer} /> },
+                        { key: 'profile', label: 'Profile', children: <ProfileTab customer={customer} /> },
                     ]}
                 />
             </>

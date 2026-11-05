@@ -37,14 +37,38 @@ export type ProductPayload = Pick<
 export interface Customer extends Audit {
   name: string;
   phone: string;
-  email?: string;
-  address?: string;
+  email?: string | null;
+  address?: string | null;
+  city?: string | null;
   isActive: boolean;
 }
-export type CustomerPayload = Pick<
-  Customer,
-  "name" | "phone" | "email" | "address"
->;
+export interface CustomerDetail extends Customer {
+  alternatePhone: string;
+  occupation: string;
+  employer: string;
+  notes: string;
+  monthlySalary: number | null;
+  creditLimit: number | null;
+  cnic: string | null; // 13 digits, no dashes — format for display
+  manager: string | null;
+  managerName: string | null;
+}
+
+export interface CustomerPayload {
+  name: string;
+  phone: string;
+  email?: string | null;
+  address?: string | null;
+  city?: string;
+  alternatePhone?: string;
+  occupation?: string;
+  employer?: string;
+  notes?: string;
+  monthlySalary?: number | null;
+  creditLimit?: number | null;
+  cnic?: string | null;
+  manager?: string | null;
+}
 export interface BillItem {
   id: string;
   product: string | null;

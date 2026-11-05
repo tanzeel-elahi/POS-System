@@ -54,6 +54,7 @@ export const CustomersPage = () => {
     { title: 'Phone', dataIndex: 'phone', sorter: true },
     { title: 'Email', dataIndex: 'email', sorter: true, render: (v?: string) => v || '-' },
     { title: 'Address', dataIndex: 'address', render: (v?: string) => v || '-' },
+    { title: 'City', dataIndex: 'city', render: (v?: string | null) => v || '-' },
     { title: 'Created', dataIndex: 'createdAt', sorter: true, render: (v: string) => new Date(v).toLocaleDateString() },
     {
       title: 'Action',

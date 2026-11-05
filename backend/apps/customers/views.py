@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
 
 from .models import Customer
-from .serializers import CustomerSerializer
+from .serializers import CustomerSerializer, CustomerListSerializer
 from .services import CustomerService
 
 
@@ -21,7 +21,7 @@ class CustomerListCreateView(APIView):
             customers = customers.filter(
                 name__icontains=search) | customers.filter(phone__icontains=search)
 
-        serializer = CustomerSerializer(customers, many=True)
+        serializer = CustomerListSerializer(customers, many=True)
         return Response(serializer.data)
 
     def post(self, request):
@@ -98,4 +98,4 @@ class CustomerLookupView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        return Response(CustomerSerializer(customer).data)
+        return Response(CustomerListSerializer(customer).data)

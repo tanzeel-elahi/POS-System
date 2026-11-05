@@ -567,6 +567,7 @@ export const BillingPage = () => {
                     <Descriptions column={1} size="small">
                       <Descriptions.Item label="Name">{foundCustomer.name}</Descriptions.Item>
                       <Descriptions.Item label="Phone">{foundCustomer.phone}</Descriptions.Item>
+                      <Descriptions.Item label="City">{foundCustomer.city || '-'}</Descriptions.Item>
                       <Descriptions.Item label="Email">{foundCustomer.email || '-'}</Descriptions.Item>
                       <Descriptions.Item label="Address">{foundCustomer.address || '-'}</Descriptions.Item>
                       <Descriptions.Item label="Credit">
