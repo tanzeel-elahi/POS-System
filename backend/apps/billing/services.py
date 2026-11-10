@@ -48,7 +48,7 @@ class BillingService:
                 BillItem.objects.create(
                     bill=bill,
                     product=product,
-                    name=product.name,
+                    name=product.display_name[:200],
                     unit_price=product.price,
                     quantity=quantity,
                 )

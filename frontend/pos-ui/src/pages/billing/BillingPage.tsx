@@ -9,7 +9,7 @@ import { BillingService } from '@services/billingService';
 import { CreditService } from '@services/creditService';
 import { useDebounce } from '@/utils/useDebounce';
 import { getApiError } from '@/utils/apiError';
-import type { Bill, Customer, PaymentMode } from '@/types';
+import type { Bill, Customer, PaymentMode, Product } from '@/types';
 import { BillReceiptModal } from './BillReceiptModal';
 
 interface Row {
@@ -67,16 +67,22 @@ export const BillingPage = () => {
 
   /* ---------- focus management ---------- */
 
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+
   const refs = useRef<Record<string, Focusable>>({});
-  const pendingFocus = useRef<string | null>(null);
+  // Starts as 'last:item' so the cashier lands in the first item field, ready to scan.
+  const pendingFocus = useRef<string | null>('last:item');
   const focusField = (rowKey: string, field: 'item' | 'price' | 'qty') => {
     pendingFocus.current = `${rowKey}:${field}`;
   };
   useEffect(() => {
-    if (pendingFocus.current) {
-      refs.current[pendingFocus.current]?.focus();
-      pendingFocus.current = null;
-    }
+    const p = pendingFocus.current;
+    if (!p) return;
+    const rs = rowsRef.current;
+    const target = p === 'last:item' ? `${rs[rs.length - 1].key}:item` : p;
+    refs.current[target]?.focus();
+    pendingFocus.current = null;
   });
 
   /* ---------- product search ---------- */
@@ -101,6 +107,9 @@ export const BillingPage = () => {
       label: (
         <Flex justify="space-between" gap={12}>
           <span>
+            {p.displayName} <Typography.Text type="secondary">{p.sku}</Typography.Text>
+          </span>
+          <span>
             {p.name} <Typography.Text type="secondary">{p.sku}</Typography.Text>
           </span>
           <span>
@@ -109,7 +118,7 @@ export const BillingPage = () => {
         </Flex>
       ),
     }));
-    const exactMatch = products.some((p) => p.name.toLowerCase() === q.toLowerCase());
+    const exactMatch = products.some((p) => [p.displayName, p.name].some((n) => n.toLowerCase() === q.toLowerCase()));
     if (!exactMatch) {
       opts.push({
         value: CUSTOM_VALUE,
@@ -191,6 +200,55 @@ export const BillingPage = () => {
     );
   };
 
+  const applyProduct = (key: string, product: Product, fromScan = false) => {
+    if (product.stockQuantity <= 0) {
+      message.warning(`"${product.displayName}" is out of stock`);
+      return;
+    }
+
+    // Already on the bill? Bump that row instead of adding a duplicate.
+    const dup = rowsRef.current.find((r) => r.productId === product.id && r.key !== key);
+    if (dup) {
+      if (dup.quantity + 1 > product.stockQuantity) {
+        message.warning(`Only ${product.stockQuantity} of "${product.displayName}" in stock`);
+      }
+      setRows((prev) =>
+        withTrailing(
+          prev.map((r) => {
+            if (r.key === key) return blankRow(r);
+            if (r.key === dup.key && r.quantity + 1 <= product.stockQuantity) return { ...r, quantity: r.quantity + 1 };
+            return r;
+          }),
+        ),
+      );
+      focusField(key, 'item');
+      return;
+    }
+
+    setRows((prev) =>
+      withTrailing(
+        prev.map((r) =>
+          r.key === key
+            ? {
+              ...r,
+              name: product.displayName,
+              committed: true,
+              isCustom: false,
+              productId: product.id,
+              sku: product.sku,
+              unitPrice: product.price,
+              quantity: 1,
+              maxQty: product.stockQuantity,
+            }
+            : r,
+        ),
+      ),
+    );
+    // A scan stays ready for the next scan; picking by hand goes to Qty.
+    if (fromScan) pendingFocus.current = 'last:item';
+    else focusField(key, 'qty');
+  };
+
   const onItemSelect = (key: string, value: string) => {
     const current = rows.find((r) => r.key === key);
     if (!current) return;
@@ -212,50 +270,26 @@ export const BillingPage = () => {
     }
 
     const product = products.find((p) => p.id === value.slice(PRODUCT_PREFIX.length));
-    if (!product) return;
-    if (product.stockQuantity <= 0) {
-      message.warning(`"${product.name}" is out of stock`);
-      return;
-    }
+    if (product) applyProduct(key, product);
+  };
 
-    const dup = rows.find((r) => r.productId === product.id && r.key !== key);
-    if (dup) {
-      if (dup.quantity + 1 > product.stockQuantity) {
-        message.warning(`Only ${product.stockQuantity} of "${product.name}" in stock`);
-      }
-      setRows((prev) =>
-        withTrailing(
-          prev.map((r) => {
-            if (r.key === key) return blankRow(r);
-            if (r.key === dup.key && r.quantity + 1 <= product.stockQuantity) return { ...r, quantity: r.quantity + 1 };
-            return r;
-          }),
-        ),
-      );
-      focusField(key, 'item');
-      return;
-    }
+  // Scanners type the code and press Enter within milliseconds — before the search has caught up.
+  // With no options on screen, Enter looks the text up as a code instead of doing nothing.
+  const onItemKeyDown = async (key: string, e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' || itemOptions.length > 0) return;
+    const row = rowsRef.current.find((r) => r.key === key);
+    const code = row?.name.trim();
+    if (!row || row.committed || !code) return;
 
-    setRows((prev) =>
-      withTrailing(
-        prev.map((r) =>
-          r.key === key
-            ? {
-              ...r,
-              name: product.name,
-              committed: true,
-              isCustom: false,
-              productId: product.id,
-              sku: product.sku,
-              unitPrice: product.price,
-              quantity: 1,
-              maxQty: product.stockQuantity,
-            }
-            : r,
-        ),
-      ),
-    );
-    focusField(key, 'qty');
+    try {
+      const product = await ProductService.lookupByCode(code);
+      // The text may have changed while we waited
+      if (rowsRef.current.find((r) => r.key === key)?.name.trim() !== code) return;
+      if (product) applyProduct(key, product, true);
+      else if (!/\s/.test(code)) message.warning(`No product with code "${code}"`);
+    } catch (err) {
+      message.error(getApiError(err, 'Code lookup failed'));
+    }
   };
 
   const updateRow = (key: string, patch: Partial<Row>) =>
@@ -418,6 +452,7 @@ export const BillingPage = () => {
             onSearch={setSearch}
             onChange={(text) => onItemText(r.key, text)}
             onSelect={(value) => onItemSelect(r.key, value)}
+            onKeyDown={(e) => onItemKeyDown(r.key, e)}
           />
           {r.committed && r.isCustom && <Tag>Custom</Tag>}
           {r.committed && r.sku && (

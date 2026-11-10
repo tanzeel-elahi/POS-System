@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { App, Button, Card, Dropdown, Flex, Input, Space, Tag, Typography } from 'antd';
+import { App, Button, Card, Dropdown, Flex, Input, Select, Space, Tag, Typography } from 'antd';
 import type { TableColumnsType, TableProps } from 'antd';
-import { DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined, QrcodeOutlined, TagsOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GenericTable } from '@components/GenericTable';
 import { DeleteConfirmModal } from '@components/DeleteConfirmModal';
@@ -9,6 +9,9 @@ import { ProductService } from '@services/productService';
 import { DEFAULT_PAGE_SIZE } from '@/utils/constants';
 import type { Product } from '@/types';
 import { ProductFormModal } from './ProductFormModal';
+import { CategoriesModal } from './CategoriesModal';
+import { ProductQrModal } from './ProductQrModal';
+import { useCategories } from './useCategories';
 
 export const ProductsPage = () => {
   const queryClient = useQueryClient();
@@ -16,19 +19,25 @@ export const ProductsPage = () => {
 
   const [pagination, setPagination] = useState({ current: 1, pageSize: DEFAULT_PAGE_SIZE });
   const [search, setSearch] = useState('');
+  const [category, setCategory] = useState<string>();
   const [sortField, setSortField] = useState<string>();
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [deleting, setDeleting] = useState<Product | null>(null);
+  const [qrProduct, setQrProduct] = useState<Product | null>(null);
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
+
+  const categoriesQuery = useCategories();
 
   const query = useQuery({
-    queryKey: ['products', pagination, search, sortField, sortOrder],
+    queryKey: ['products', pagination, search, category, sortField, sortOrder],
     queryFn: () =>
       ProductService.getProducts({
         skip: (pagination.current - 1) * pagination.pageSize,
         take: pagination.pageSize,
         search: search || undefined,
+        category,
         sortField,
         sortOrder,
       }),
@@ -48,8 +57,9 @@ export const ProductsPage = () => {
   });
 
   const columns: TableColumnsType<Product> = [
-    { title: 'Name', dataIndex: 'name', sorter: true },
+    { title: 'Name', dataIndex: 'displayName', sorter: true },
     { title: 'SKU', dataIndex: 'sku', sorter: true },
+    { title: 'Category', dataIndex: 'categoryName', render: (v: string | null) => v || '-' },
     { title: 'Price', dataIndex: 'price', sorter: true, align: 'right', render: (v: number) => v.toFixed(2) },
     {
       title: 'Stock',
@@ -57,11 +67,6 @@ export const ProductsPage = () => {
       sorter: true,
       align: 'right',
       render: (v: number) => (v === 0 ? <Tag color="red">Out of stock</Tag> : v <= 10 ? <Tag color="orange">{v} low</Tag> : v),
-    },
-    {
-      title: 'Status',
-      dataIndex: 'isActive',
-      render: (v: boolean) => <Tag color={v ? 'green' : 'default'}>{v ? 'Active' : 'Inactive'}</Tag>,
     },
     {
       title: 'Action',
@@ -73,6 +78,7 @@ export const ProductsPage = () => {
           trigger={['click']}
           menu={{
             items: [
+              { key: 'qr', icon: <QrcodeOutlined />, label: 'QR code', onClick: () => setQrProduct(record) },
               { key: 'edit', icon: <EditOutlined />, label: 'Edit', onClick: () => { setEditing(record); setFormOpen(true); } },
               { key: 'delete', icon: <DeleteOutlined />, label: 'Delete', danger: true, onClick: () => setDeleting(record) },
             ],
@@ -95,13 +101,28 @@ export const ProductsPage = () => {
     <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
       <Flex justify="space-between" align="center" wrap="wrap" gap={12}>
         <Typography.Title level={3} style={{ margin: 0 }}>Products</Typography.Title>
-        <Space>
+        <Space wrap>
+          <Select
+            allowClear
+            placeholder="All categories"
+            style={{ width: 180 }}
+            value={category}
+            loading={categoriesQuery.isLoading}
+            options={(categoriesQuery.data ?? []).map((c) => ({ value: c.id, label: c.name }))}
+            onChange={(v) => {
+              setCategory(v);
+              setPagination((p) => ({ ...p, current: 1 }));
+            }}
+          />
           <Input.Search
             allowClear
-            placeholder="Search name, SKU, category..."
+            placeholder="Search name, SKU or QR code..."
             onSearch={(v) => { setSearch(v.trim()); setPagination((p) => ({ ...p, current: 1 })); }}
-            style={{ width: 280 }}
+            style={{ width: 260 }}
           />
+          <Button icon={<TagsOutlined />} onClick={() => setCategoriesOpen(true)}>
+            Categories
+          </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>
             Add Product
           </Button>
@@ -125,9 +146,12 @@ export const ProductsPage = () => {
         onSuccess={() => { setFormOpen(false); setEditing(null); refresh(); }}
       />
 
+      <CategoriesModal open={categoriesOpen} onClose={() => setCategoriesOpen(false)} />
+      <ProductQrModal product={qrProduct} onClose={() => setQrProduct(null)} />
+
       <DeleteConfirmModal
         open={!!deleting}
-        itemLabel={deleting?.name ?? ''}
+        itemLabel={deleting?.displayName ?? ''}
         title="Delete Product"
         warningMessage="This action cannot be undone."
         confirmLoading={deleteMutation.isPending}

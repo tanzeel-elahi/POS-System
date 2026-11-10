@@ -14,6 +14,7 @@ export interface ListParams {
   search?: string;
   sortField?: string;
   sortOrder?: "asc" | "desc";
+  category?: string;
 }
 
 interface Audit {
@@ -28,11 +29,29 @@ export interface Product extends Audit {
   price: number;
   stockQuantity: number;
   isActive: boolean;
+  category: string | null;
+  categoryName: string | null;
+  qrCode: string | null;
+  size: string; // "" when not set
+  variant: string; // "" when not set
+  displayName: string; // e.g. "T-shirt (M, Red)" — use this wherever a cashier sees a product
 }
-export type ProductPayload = Pick<
-  Product,
-  "name" | "sku" | "price" | "stockQuantity"
->;
+
+export interface ProductPayload {
+  name: string;
+  sku: string;
+  price: number;
+  stockQuantity: number;
+  category?: string | null;
+  qrCode?: string | null;
+  size?: string;
+  variant?: string;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+}
 
 export interface Customer extends Audit {
   name: string;
