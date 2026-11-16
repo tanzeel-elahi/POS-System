@@ -29,14 +29,15 @@ export interface Product extends Audit {
   price: number;
   stockQuantity: number;
   isActive: boolean;
+  group: string | null; // null = simple product
   category: string | null;
   categoryName: string | null;
   qrCode: string | null;
-  size: string; // "" when not set
-  variant: string; // "" when not set
-  displayName: string; // e.g. "T-shirt (M, Red)" — use this wherever a cashier sees a product
+  attributes: Record<string, string>; // {} for simple products
+  displayName: string; // e.g. "Water Bottle (800ml, Red, Plastic)"
 }
 
+// Simple products only. Variants never send name/category on edit.
 export interface ProductPayload {
   name: string;
   sku: string;
@@ -44,8 +45,6 @@ export interface ProductPayload {
   stockQuantity: number;
   category?: string | null;
   qrCode?: string | null;
-  size?: string;
-  variant?: string;
 }
 
 export interface Category {
@@ -154,4 +153,42 @@ export interface CreditStatement {
   totalPayments: number;
   closingBalance: number;
   entries: StatementEntry[];
+}
+
+
+export interface VariantInput {
+  sku: string;
+  price: number;
+  stockQuantity: number;
+  qrCode?: string | null;
+  attributes: Record<string, string>; // complete object, one value per attribute
+}
+
+export interface ProductVariant {
+  id: string;
+  sku: string;
+  price: number;
+  stockQuantity: number;
+  qrCode: string | null;
+  attributes: Record<string, string>;
+  displayName: string;
+  isActive: boolean;
+}
+
+export interface ProductGroup extends Audit {
+  name: string;
+  description: string;
+  category: string | null;
+  categoryName: string | null;
+  attributeNames: string[]; // use this for column order
+  variants: ProductVariant[];
+  isActive: boolean;
+}
+
+export interface ProductGroupCreatePayload {
+  name: string;
+  description?: string;
+  category?: string | null;
+  attributeNames: string[];
+  variants: VariantInput[];
 }

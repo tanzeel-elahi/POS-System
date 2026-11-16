@@ -16,6 +16,25 @@ class Category(models.Model):
         return self.name
 
 
+class ProductGroup(models.Model):
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='product_groups',
+    )
+    attribute_names = models.JSONField(default=list, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Product(models.Model):
     name = models.CharField(max_length=200)
     sku = models.CharField(max_length=50, unique=True)
@@ -30,13 +49,20 @@ class Product(models.Model):
     )
     qr_code = models.CharField(
         max_length=100, unique=True, null=True, blank=True)
-    size = models.CharField(max_length=50, blank=True)
-    variant = models.CharField(max_length=100, blank=True)
+    group = models.ForeignKey(
+        ProductGroup, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='variants',
+    )
+    attributes = models.JSONField(default=dict, blank=True)
 
     @property
     def display_name(self):
-        details = ', '.join(part for part in (self.size, self.variant) if part)
-        return f"{self.name} ({details})" if details else self.name
+        if self.group_id and self.attributes:
+            values = [self.attributes[name] for name in self.group.attribute_names
+                      if self.attributes.get(name)]
+            if values:
+                return f"{self.name} ({', '.join(values)})"
+        return self.name
 
     class Meta:
         ordering = ['name']

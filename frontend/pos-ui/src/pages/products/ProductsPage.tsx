@@ -1,14 +1,26 @@
 import { useState } from 'react';
 import { App, Button, Card, Dropdown, Flex, Input, Select, Space, Tag, Typography } from 'antd';
 import type { TableColumnsType, TableProps } from 'antd';
-import { DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined, QrcodeOutlined, TagsOutlined } from '@ant-design/icons';
+import {
+  AppstoreAddOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  MoreOutlined,
+  PlusOutlined,
+  QrcodeOutlined,
+  TagsOutlined,
+} from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GenericTable } from '@components/GenericTable';
 import { DeleteConfirmModal } from '@components/DeleteConfirmModal';
 import { ProductService } from '@services/productService';
+import { ProductGroupService } from '@services/productGroupService';
 import { DEFAULT_PAGE_SIZE } from '@/utils/constants';
 import type { Product } from '@/types';
 import { ProductFormModal } from './ProductFormModal';
+import { ProductCreateModal } from './ProductCreateModal';
+import { ProductGroupEditModal } from './ProductGroupEditModal';
+import { VariantFormModal } from './VariantFormModal';
 import { CategoriesModal } from './CategoriesModal';
 import { ProductQrModal } from './ProductQrModal';
 import { useCategories } from './useCategories';
@@ -22,9 +34,15 @@ export const ProductsPage = () => {
   const [category, setCategory] = useState<string>();
   const [sortField, setSortField] = useState<string>();
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>();
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<Product | null>(null);
-  const [deleting, setDeleting] = useState<Product | null>(null);
+
+  // modals
+  const [simpleOpen, setSimpleOpen] = useState(false);
+  const [editing, setEditing] = useState<Product | null>(null); // simple product being edited
+  const [createOpen, setCreateOpen] = useState(false);
+  const [variantModal, setVariantModal] = useState<{ editing: Product | null; groupId: string | null } | null>(null);
+  const [editGroupId, setEditGroupId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Product | null>(null); // one product / one variant
+  const [deletingGroup, setDeletingGroup] = useState<Product | null>(null); // whole product
   const [qrProduct, setQrProduct] = useState<Product | null>(null);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
 
@@ -44,6 +62,7 @@ export const ProductsPage = () => {
     placeholderData: (prev) => prev,
   });
 
+  // One prefix refreshes the list, the billing search AND every ['products', 'group', id] detail.
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['products'] });
 
   const deleteMutation = useMutation({
@@ -55,6 +74,24 @@ export const ProductsPage = () => {
     },
     onError: () => message.error('Failed to delete product'),
   });
+
+  const deleteGroupMutation = useMutation({
+    mutationFn: (id: string) => ProductGroupService.deleteGroup(id),
+    onSuccess: () => {
+      message.success('Product and all its variants deleted');
+      setDeletingGroup(null);
+      refresh();
+    },
+    onError: () => message.error('Failed to delete product'),
+  });
+
+  const openEdit = (record: Product) => {
+    if (record.group) setVariantModal({ editing: record, groupId: record.group });
+    else {
+      setEditing(record);
+      setSimpleOpen(true);
+    }
+  };
 
   const columns: TableColumnsType<Product> = [
     { title: 'Name', dataIndex: 'displayName', sorter: true },
@@ -73,20 +110,56 @@ export const ProductsPage = () => {
       key: 'actions',
       width: 90,
       fixed: 'right',
-      render: (_, record) => (
-        <Dropdown
-          trigger={['click']}
-          menu={{
-            items: [
-              { key: 'qr', icon: <QrcodeOutlined />, label: 'QR code', onClick: () => setQrProduct(record) },
-              { key: 'edit', icon: <EditOutlined />, label: 'Edit', onClick: () => { setEditing(record); setFormOpen(true); } },
-              { key: 'delete', icon: <DeleteOutlined />, label: 'Delete', danger: true, onClick: () => setDeleting(record) },
-            ],
-          }}
-        >
-          <Button type="text" size="small" icon={<MoreOutlined />} />
-        </Dropdown>
-      ),
+      render: (_, record) => {
+        const isVariant = !!record.group;
+        return (
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              items: [
+                { key: 'qr', icon: <QrcodeOutlined />, label: 'QR code', onClick: () => setQrProduct(record) },
+                { key: 'edit', icon: <EditOutlined />, label: isVariant ? 'Edit variant' : 'Edit', onClick: () => openEdit(record) },
+                ...(isVariant
+                  ? [
+                    {
+                      key: 'edit-product',
+                      icon: <EditOutlined />,
+                      label: 'Edit product (name, category)',
+                      onClick: () => setEditGroupId(record.group),
+                    },
+                    {
+                      key: 'add-variant',
+                      icon: <AppstoreAddOutlined />,
+                      label: 'Add variant',
+                      onClick: () => setVariantModal({ editing: null, groupId: record.group }),
+                    },
+                  ]
+                  : []),
+                {
+                  key: 'delete',
+                  icon: <DeleteOutlined />,
+                  label: isVariant ? 'Delete variant' : 'Delete',
+                  danger: true,
+                  onClick: () => setDeleting(record),
+                },
+                ...(isVariant
+                  ? [
+                    {
+                      key: 'delete-product',
+                      icon: <DeleteOutlined />,
+                      label: 'Delete whole product',
+                      danger: true,
+                      onClick: () => setDeletingGroup(record),
+                    },
+                  ]
+                  : []),
+              ],
+            }}
+          >
+            <Button type="text" size="small" icon={<MoreOutlined />} />
+          </Dropdown>
+        );
+      },
     },
   ];
 
@@ -123,7 +196,7 @@ export const ProductsPage = () => {
           <Button icon={<TagsOutlined />} onClick={() => setCategoriesOpen(true)}>
             Categories
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
             Add Product
           </Button>
         </Space>
@@ -140,10 +213,30 @@ export const ProductsPage = () => {
       </Card>
 
       <ProductFormModal
-        open={formOpen}
+        open={simpleOpen}
         editing={editing}
-        onClose={() => { setFormOpen(false); setEditing(null); }}
-        onSuccess={() => { setFormOpen(false); setEditing(null); refresh(); }}
+        onClose={() => { setSimpleOpen(false); setEditing(null); }}
+        onSuccess={() => { setSimpleOpen(false); setEditing(null); refresh(); }}
+      />
+
+      <ProductCreateModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSuccess={() => { setCreateOpen(false); refresh(); }}
+      />
+
+      <VariantFormModal
+        open={!!variantModal}
+        editing={variantModal?.editing ?? null}
+        groupId={variantModal?.groupId ?? null}
+        onClose={() => setVariantModal(null)}
+        onSuccess={() => { setVariantModal(null); refresh(); }}
+      />
+
+      <ProductGroupEditModal
+        groupId={editGroupId}
+        onClose={() => setEditGroupId(null)}
+        onSuccess={() => { setEditGroupId(null); refresh(); }}
       />
 
       <CategoriesModal open={categoriesOpen} onClose={() => setCategoriesOpen(false)} />
@@ -152,11 +245,21 @@ export const ProductsPage = () => {
       <DeleteConfirmModal
         open={!!deleting}
         itemLabel={deleting?.displayName ?? ''}
-        title="Delete Product"
+        title={deleting?.group ? 'Delete Variant' : 'Delete Product'}
         warningMessage="This action cannot be undone."
         confirmLoading={deleteMutation.isPending}
         onCancel={() => setDeleting(null)}
         onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+      />
+
+      <DeleteConfirmModal
+        open={!!deletingGroup}
+        itemLabel={deletingGroup?.name ?? ''}
+        title="Delete Whole Product"
+        warningMessage="This deletes the product and ALL of its variants."
+        confirmLoading={deleteGroupMutation.isPending}
+        onCancel={() => setDeletingGroup(null)}
+        onConfirm={() => deletingGroup?.group && deleteGroupMutation.mutate(deletingGroup.group)}
       />
     </Space>
   );

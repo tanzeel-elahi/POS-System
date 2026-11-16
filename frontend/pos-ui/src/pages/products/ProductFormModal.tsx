@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { App, Form, Input, InputNumber, Modal, Select } from 'antd';
 import { useMutation } from '@tanstack/react-query';
 import { ProductService } from '@services/productService';
-import { getApiError } from '@/utils/apiError';
+import { applyApiErrors } from '@/utils/formErrors';
 import type { Product, ProductPayload } from '@/types';
 import { useCategories } from './useCategories';
 
@@ -13,8 +13,6 @@ interface FormValues {
   stockQuantity: number;
   category?: string | null;
   qrCode?: string;
-  size?: string;
-  variant?: string;
 }
 
 interface Props {
@@ -24,11 +22,10 @@ interface Props {
   onSuccess: () => void;
 }
 
-const camel = (s: string) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-
-// Business errors arrive as { detail }; route the ones we recognise to their field.
-const fieldForDetail = (msg: string): keyof FormValues | null => {
+const routeDetail = (msg: string) => {
   if (/price/i.test(msg)) return 'price';
+  if (/qr code/i.test(msg)) return 'qrCode';
+  if (/sku/i.test(msg)) return 'sku';
   if (/category/i.test(msg)) return 'category';
   return null;
 };
@@ -51,8 +48,6 @@ export const ProductFormModal = ({ open, editing, onClose, onSuccess }: Props) =
         stockQuantity: editing.stockQuantity,
         category: editing.category ?? undefined,
         qrCode: editing.qrCode ?? '',
-        size: editing.size,
-        variant: editing.variant,
       });
     } else {
       form.resetFields();
@@ -72,44 +67,12 @@ export const ProductFormModal = ({ open, editing, onClose, onSuccess }: Props) =
       message.success(`Product ${isEditing ? 'updated' : 'created'} successfully`);
       onSuccess();
     },
-    onError: (e: any) => {
-      const data = e?.response?.data;
-      if (e?.response?.status === 400 && data && typeof data === 'object') {
-        const fields: { name: keyof FormValues; errors: string[] }[] = Object.entries(data)
-          .filter(([key]) => key !== 'detail' && key !== 'non_field_errors')
-          .map(([key, errs]) => ({
-            name: camel(key) as keyof FormValues,
-            errors: ([] as string[]).concat(errs as any),
-          }));
-
-        if (data.detail || data.non_field_errors) {
-          const msg = getApiError(e);
-          const target = fieldForDetail(msg);
-          if (target) fields.push({ name: target, errors: [msg] });
-          else message.error(msg);
-        }
-        form.setFields(fields);
-      } else {
-        message.error(getApiError(e, 'Something went wrong'));
-      }
-    },
+    onError: (e) => applyApiErrors(form, e, message, routeDetail),
   });
-
-  const handleFinish = (v: FormValues) =>
-    mutation.mutate({
-      name: v.name,
-      sku: v.sku,
-      price: v.price,
-      stockQuantity: v.stockQuantity,
-      category: v.category ?? null,
-      qrCode: v.qrCode,
-      size: v.size,
-      variant: v.variant,
-    });
 
   return (
     <Modal
-      title={isEditing ? 'Edit Product' : 'Add Product'}
+      title="Edit Product"
       open={open}
       onCancel={onClose}
       onOk={() => form.submit()}
@@ -118,7 +81,21 @@ export const ProductFormModal = ({ open, editing, onClose, onSuccess }: Props) =
       destroyOnHidden
       width={640}
     >
-      <Form form={form} layout="vertical" initialValues={{ stockQuantity: 0 }} onFinish={handleFinish}>
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{ stockQuantity: 0 }}
+        onFinish={(v) =>
+          mutation.mutate({
+            name: v.name,
+            sku: v.sku,
+            price: v.price,
+            stockQuantity: v.stockQuantity,
+            category: v.category ?? null,
+            qrCode: v.qrCode,
+          })
+        }
+      >
         <Form.Item label="Name" name="name" rules={[{ required: true, whitespace: true, message: 'Please enter a name' }]}>
           <Input />
         </Form.Item>
@@ -127,7 +104,7 @@ export const ProductFormModal = ({ open, editing, onClose, onSuccess }: Props) =
           <Form.Item label="SKU" name="sku" rules={[{ required: true, whitespace: true, message: 'Please enter a SKU' }]}>
             <Input />
           </Form.Item>
-          <Form.Item label="QR code" name="qrCode">
+          <Form.Item label="QR code" name="qrCode" extra="Optional. Empty means the SKU is used when scanning.">
             <Input maxLength={100} />
           </Form.Item>
 
@@ -142,13 +119,6 @@ export const ProductFormModal = ({ open, editing, onClose, onSuccess }: Props) =
             />
           </Form.Item>
           <div />
-
-          <Form.Item label="Size" name="size">
-            <Input maxLength={50} placeholder="e.g. M" />
-          </Form.Item>
-          <Form.Item label="Variant" name="variant">
-            <Input maxLength={100} placeholder="e.g. Red" />
-          </Form.Item>
 
           <Form.Item label="Price" name="price" rules={[{ required: true, message: 'Please enter a price' }]}>
             <InputNumber min={0.01} precision={2} style={{ width: '100%' }} />
