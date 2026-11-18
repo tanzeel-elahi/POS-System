@@ -15,6 +15,7 @@ export interface ListParams {
   sortField?: string;
   sortOrder?: "asc" | "desc";
   category?: string;
+  includeSubcategories?: boolean;
 }
 
 interface Audit {
@@ -50,6 +51,15 @@ export interface ProductPayload {
 export interface Category {
   id: string;
   name: string;
+  parent: string | null;
+  path: string[]; // ["Clothing", "Men", "Shirts"]
+}
+
+export interface CategoryNode {
+  id: string;
+  name: string;
+  parent: string | null;
+  children: CategoryNode[];
 }
 
 export interface Customer extends Audit {
@@ -154,7 +164,6 @@ export interface CreditStatement {
   closingBalance: number;
   entries: StatementEntry[];
 }
-
 
 export interface VariantInput {
   sku: string;

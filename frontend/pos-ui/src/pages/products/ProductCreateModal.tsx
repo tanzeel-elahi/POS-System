@@ -9,6 +9,7 @@ import { applyApiErrors } from '@/utils/formErrors';
 import { getApiError } from '@/utils/apiError';
 import type { ProductGroupCreatePayload, ProductPayload } from '@/types';
 import { useCategories } from './useCategories';
+import { CategorySelect } from './CategorySelect';
 
 interface FormValues {
   name: string;
@@ -76,7 +77,6 @@ const grid = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' } 
 export const ProductCreateModal = ({ open, onClose, onSuccess }: Props) => {
   const [form] = Form.useForm<FormValues>();
   const { message, modal } = App.useApp();
-  const categoriesQuery = useCategories(open);
 
   const [variantMode, setVariantMode] = useState(false);
   const [attrs, setAttrs] = useState<AttrDef[]>([newAttr()]);
@@ -357,15 +357,8 @@ export const ProductCreateModal = ({ open, onClose, onSuccess }: Props) => {
             <Input placeholder="e.g. Water Bottle" />
           </Form.Item>
           <Form.Item label="Category" name="category">
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              placeholder="No category"
-              loading={categoriesQuery.isLoading}
-              options={(categoriesQuery.data ?? []).map((c) => ({ value: c.id, label: c.name }))}
-            />
-          </Form.Item>
+              <CategorySelect />
+            </Form.Item>
         </div>
 
         {variantMode ? (

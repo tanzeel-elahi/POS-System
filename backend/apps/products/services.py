@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from .models import Category, Product, ProductGroup
 from django.db import transaction
+from collections import defaultdict
 
 
 def normalize_qr_code(value):
@@ -122,22 +123,136 @@ class ProductService:
         return product
 
 
+MAX_CATEGORY_DEPTH = 5
+
+
 class CategoryService:
 
+    # ---- reading the tree (one query each, then work in memory) ----
+
     @staticmethod
-    def create_category(*, name):
+    def _parent_map():
+        """{category id: parent id}. A whole tree is small, so load it once."""
+        return dict(Category.objects.values_list('id', 'parent_id'))
+
+    @staticmethod
+    def _children_map(parent_of):
+        children = defaultdict(list)
+        for child_id, parent_id in parent_of.items():
+            children[parent_id].append(child_id)
+        return children
+
+    @staticmethod
+    def _depth(category_id, parent_of):
+        """Levels from the top down to this category (a top-level one is 1)."""
+        depth, seen = 0, set()
+        while category_id is not None and category_id not in seen:
+            seen.add(category_id)
+            depth += 1
+            category_id = parent_of.get(category_id)
+        return depth
+
+    @staticmethod
+    def _height(category_id, children):
+        """Levels in the branch starting at this category, counting itself."""
+        return 1 + max(
+            (CategoryService._height(c, children) for c in children.get(category_id, [])),
+            default=0,
+        )
+
+    @staticmethod
+    def subtree_ids(category_id):
+        """This category's id plus the ids of everything below it."""
+        children = CategoryService._children_map(CategoryService._parent_map())
+        ids, stack = [], [category_id]
+        while stack:
+            node = stack.pop()
+            ids.append(node)
+            stack.extend(children.get(node, []))
+        return ids
+
+    @staticmethod
+    def build_paths():
+        """{category id: ['Clothing', 'Men', 'Shirts']}"""
+        rows = {i: (name, parent) for i, name, parent
+                in Category.objects.values_list('id', 'name', 'parent_id')}
+        paths = {}
+        for category_id in rows:
+            chain, seen, node = [], set(), category_id
+            while node in rows and node not in seen:
+                seen.add(node)
+                name, parent = rows[node]
+                chain.append(name)
+                node = parent
+            paths[category_id] = list(reversed(chain))
+        return paths
+
+    @staticmethod
+    def get_tree():
+        """Nested list: [{'id', 'name', 'parent', 'children': [...]}, ...]"""
+        nodes = {
+            c['id']: {'id': c['id'], 'name': c['name'],
+                      'parent': c['parent_id'], 'children': []}
+            for c in Category.objects.order_by('name').values('id', 'name', 'parent_id')
+        }
+        roots = []
+        for node in nodes.values():
+            parent = nodes.get(node['parent'])
+            (parent['children'] if parent else roots).append(node)
+        return roots
+
+    # ---- writing ----
+
+    @staticmethod
+    def _check_name_free(name, parent_id, exclude_pk=None):
+        siblings = Category.objects.filter(parent_id=parent_id, name__iexact=name)
+        if exclude_pk:
+            siblings = siblings.exclude(pk=exclude_pk)
+        if siblings.exists():
+            raise ValidationError(
+                "A category with this name already exists in the same place.")
+
+    @staticmethod
+    def create_category(*, name, parent=None):
         name = name.strip()
-        if Category.objects.filter(name__iexact=name).exists():
-            raise ValidationError("A category with this name already exists.")
-        return Category.objects.create(name=name)
+        parent_id = parent.pk if parent else None
+        CategoryService._check_name_free(name, parent_id)
+        if parent_id is not None:
+            parent_of = CategoryService._parent_map()
+            if CategoryService._depth(parent_id, parent_of) + 1 > MAX_CATEGORY_DEPTH:
+                raise ValidationError(
+                    f"Categories can be at most {MAX_CATEGORY_DEPTH} levels deep.")
+        return Category.objects.create(name=name, parent=parent)
 
     @staticmethod
     def update_category(category, **fields):
         if 'name' in fields:
             fields['name'] = fields['name'].strip()
-            if Category.objects.filter(name__iexact=fields['name']).exclude(pk=category.pk).exists():
+        name = fields.get('name', category.name)
+
+        if 'parent' in fields:
+            parent_id = fields['parent'].pk if fields['parent'] else None
+        else:
+            parent_id = category.parent_id
+
+        if parent_id != category.parent_id:          # the category is being moved
+            parent_of = CategoryService._parent_map()
+            node, seen = parent_id, set()
+            while node is not None and node not in seen:
+                if node == category.pk:
+                    raise ValidationError(
+                        "A category cannot be moved inside itself or its own subcategories.")
+                seen.add(node)
+                node = parent_of.get(node)
+            children = CategoryService._children_map(parent_of)
+            if (CategoryService._depth(parent_id, parent_of)
+                    + CategoryService._height(category.pk, children)) > MAX_CATEGORY_DEPTH:
                 raise ValidationError(
-                    "A category with this name already exists.")
+                    f"Categories can be at most {MAX_CATEGORY_DEPTH} levels deep.")
+
+        if 'name' in fields or parent_id != category.parent_id:
+            CategoryService._check_name_free(name, parent_id, exclude_pk=category.pk)
+
         for key, value in fields.items():
             setattr(category, key, value)
         category.save()
@@ -145,6 +260,9 @@ class CategoryService:
 
     @staticmethod
     def delete_category(category):
+        if category.children.exists():
+            raise ValidationError(
+                "This category has subcategories. Move or delete them first.")
         category.delete()
 
 

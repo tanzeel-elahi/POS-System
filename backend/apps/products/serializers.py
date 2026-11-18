@@ -1,12 +1,28 @@
 from decimal import Decimal
 from rest_framework import serializers
 from .models import Category, Product, ProductGroup
+from .services import CategoryService
+
 
 class CategorySerializer(serializers.ModelSerializer):
+    name = serializers.CharField(max_length=100)
+    parent = serializers.PrimaryKeyRelatedField(
+        queryset=Category.objects.all(), required=False, allow_null=True,
+    )
+    path = serializers.SerializerMethodField()
+
     class Meta:
         model = Category
-        fields = ['id', 'name', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'parent', 'path', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
+        validators = []
+
+    def get_path(self, category):
+        # Lists pass the paths in once; a single object looks them up itself.
+        paths = self.context.get('paths')
+        if paths is None:
+            paths = CategoryService.build_paths()
+        return paths.get(category.id, [category.name])
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -28,14 +44,16 @@ class ProductSerializer(serializers.ModelSerializer):
             'group', 'attributes', 'display_name',
             'is_active', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'group', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'group',
+                            'is_active', 'created_at', 'updated_at']
 
 
 class VariantInputSerializer(serializers.Serializer):
     sku = serializers.CharField(max_length=50)
     price = serializers.DecimalField(max_digits=10, decimal_places=2,
                                      min_value=Decimal('0.01'))
-    stock_quantity = serializers.IntegerField(min_value=0, required=False, default=0)
+    stock_quantity = serializers.IntegerField(
+        min_value=0, required=False, default=0)
     qr_code = serializers.CharField(max_length=100, required=False,
                                     allow_blank=True, allow_null=True)
     attributes = serializers.DictField(

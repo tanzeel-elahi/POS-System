@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { App, Button, Card, Dropdown, Flex, Input, Select, Space, Tag, Typography } from 'antd';
+import { useMemo, useState } from 'react';
+import { App, Button, Card, Checkbox, Dropdown, Flex, Input, Space, Tag, Typography } from 'antd';
 import type { TableColumnsType, TableProps } from 'antd';
 import {
   AppstoreAddOutlined,
@@ -24,6 +24,7 @@ import { VariantFormModal } from './VariantFormModal';
 import { CategoriesModal } from './CategoriesModal';
 import { ProductQrModal } from './ProductQrModal';
 import { useCategories } from './useCategories';
+import { CategorySelect } from './CategorySelect';
 
 export const ProductsPage = () => {
   const queryClient = useQueryClient();
@@ -32,6 +33,7 @@ export const ProductsPage = () => {
   const [pagination, setPagination] = useState({ current: 1, pageSize: DEFAULT_PAGE_SIZE });
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<string>();
+  const [includeSub, setIncludeSub] = useState(true);
   const [sortField, setSortField] = useState<string>();
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>();
 
@@ -48,14 +50,22 @@ export const ProductsPage = () => {
 
   const categoriesQuery = useCategories();
 
+  // id -> "Clothing › Men › Shirts", from the flat list
+  const pathById = useMemo(
+    () => new Map((categoriesQuery.data ?? []).map((c) => [c.id, c.path.join(' › ')])),
+    [categoriesQuery.data],
+  );
+
+
   const query = useQuery({
-    queryKey: ['products', pagination, search, category, sortField, sortOrder],
+    queryKey: ['products', pagination, search, category, includeSub, sortField, sortOrder],
     queryFn: () =>
       ProductService.getProducts({
         skip: (pagination.current - 1) * pagination.pageSize,
         take: pagination.pageSize,
         search: search || undefined,
         category,
+        includeSubcategories: includeSub,
         sortField,
         sortOrder,
       }),
@@ -96,7 +106,11 @@ export const ProductsPage = () => {
   const columns: TableColumnsType<Product> = [
     { title: 'Name', dataIndex: 'displayName', sorter: true },
     { title: 'SKU', dataIndex: 'sku', sorter: true },
-    { title: 'Category', dataIndex: 'categoryName', render: (v: string | null) => v || '-' },
+    {
+      title: 'Category',
+      dataIndex: 'categoryName',
+      render: (_: unknown, r: Product) => (r.category ? (pathById.get(r.category) ?? r.categoryName ?? '-') : '-'),
+    },
     { title: 'Price', dataIndex: 'price', sorter: true, align: 'right', render: (v: number) => v.toFixed(2) },
     {
       title: 'Stock',
@@ -175,18 +189,26 @@ export const ProductsPage = () => {
       <Flex justify="space-between" align="center" wrap="wrap" gap={12}>
         <Typography.Title level={3} style={{ margin: 0 }}>Products</Typography.Title>
         <Space wrap>
-          <Select
-            allowClear
-            placeholder="All categories"
-            style={{ width: 180 }}
+          <CategorySelect
             value={category}
-            loading={categoriesQuery.isLoading}
-            options={(categoriesQuery.data ?? []).map((c) => ({ value: c.id, label: c.name }))}
+            placeholder="All categories"
+            style={{ width: 220 }}
             onChange={(v) => {
               setCategory(v);
               setPagination((p) => ({ ...p, current: 1 }));
             }}
           />
+          {category && (
+            <Checkbox
+              checked={includeSub}
+              onChange={(e) => {
+                setIncludeSub(e.target.checked);
+                setPagination((p) => ({ ...p, current: 1 }));
+              }}
+            >
+              Include subcategories
+            </Checkbox>
+          )}
           <Input.Search
             allowClear
             placeholder="Search name, SKU or QR code..."
