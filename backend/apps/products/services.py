@@ -1,7 +1,9 @@
 from django.core.exceptions import ValidationError
-from .models import Category, Product, ProductGroup
+from .models import Category, Product, ProductGroup, ProductAdjustment
 from django.db import transaction
 from collections import defaultdict
+import uuid
+from decimal import Decimal, ROUND_HALF_UP
 
 
 def normalize_qr_code(value):
@@ -58,6 +60,22 @@ def check_combo_free(group, attributes, exclude_pk=None):
                 "A variant with these attributes already exists in this product.")
 
 
+MAX_PRICE = Decimal('99999999.99')   # the price column holds 10 digits
+MAX_STOCK = 2_147_483_647            # the largest value the stock column holds
+
+
+class BulkUpdateError(Exception):
+    """Carries the list of per-row problems."""
+
+    def __init__(self, errors):
+        super().__init__("Some rows have errors.")
+        self.errors = errors
+
+
+class DuplicateBatchError(Exception):
+    pass
+
+
 class ProductService:
 
     @staticmethod
@@ -77,9 +95,11 @@ class ProductService:
         if 'qr_code' in extra:
             extra['qr_code'] = normalize_qr_code(extra['qr_code'])
             if extra['qr_code'] and Product.objects.filter(qr_code=extra['qr_code']).exists():
-                raise ValidationError(f"QR code '{extra['qr_code']}' already exists.")
+                raise ValidationError(
+                    f"QR code '{extra['qr_code']}' already exists.")
         if extra.get('attributes') and extra.get('group') is None:
-            raise ValidationError("Only variants of a grouped product can have attributes.")
+            raise ValidationError(
+                "Only variants of a grouped product can have attributes.")
         return Product.objects.create(
             name=name, sku=sku, price=price,
             stock_quantity=stock_quantity, **extra,
@@ -109,7 +129,8 @@ class ProductService:
             else:
                 fields['attributes'] = clean_attributes(
                     group.attribute_names, fields['attributes'])
-                check_combo_free(group, fields['attributes'], exclude_pk=product.pk)
+                check_combo_free(
+                    group, fields['attributes'], exclude_pk=product.pk)
 
         for key, value in fields.items():
             setattr(product, key, value)
@@ -121,6 +142,96 @@ class ProductService:
         product.is_active = False
         product.save(update_fields=['is_active'])
         return product
+
+    @staticmethod
+    @transaction.atomic
+    def bulk_update(updates, *, reason='', batch_id=None, dry_run=False):
+        ids = [row['id'] for row in updates]
+
+        queryset = (Product.objects.filter(pk__in=ids, is_active=True)
+                    .select_related('group').order_by('pk'))
+        if not dry_run:
+            # Lock only the product rows (not the joined group), in id order.
+            queryset = queryset.select_for_update(of=('self',))
+        products = {p.pk: p for p in queryset}
+
+        # Checked after the locks, so two identical requests can't both pass.
+        if (batch_id and not dry_run
+                and ProductAdjustment.objects.filter(batch_id=batch_id).exists()):
+            raise DuplicateBatchError("This batch was already applied.")
+
+        errors, planned, seen = [], [], set()
+        for index, row in enumerate(updates):
+            messages = []
+            if row['id'] in seen:
+                messages.append("This product appears more than once in the request.")
+            seen.add(row['id'])
+
+            product = products.get(row['id'])
+            if product is None:
+                messages.append("Product not found.")
+                errors.append({'index': index, 'id': row['id'], 'messages': messages})
+                continue
+
+            new_price = product.price
+            if 'price' in row:
+                new_price = row['price']
+            elif 'price_percent' in row:
+                factor = (Decimal('100') + row['price_percent']) / Decimal('100')
+                new_price = (product.price * factor).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP)
+            if new_price <= 0:
+                messages.append(f"Price must be greater than zero (it would be {new_price}).")
+            elif new_price > MAX_PRICE:
+                messages.append("Price is too large.")
+
+            new_stock = product.stock_quantity
+            if 'stock_quantity' in row:
+                new_stock = row['stock_quantity']
+            elif 'stock_change' in row:
+                new_stock = product.stock_quantity + row['stock_change']
+            if new_stock < 0:
+                messages.append(f"Stock cannot go below zero (it would be {new_stock}).")
+            elif new_stock > MAX_STOCK:
+                messages.append("Stock is too large.")
+
+            if messages:
+                errors.append({'index': index, 'id': row['id'], 'messages': messages})
+                continue
+            planned.append((product, new_price, new_stock))
+
+        if errors:
+            raise BulkUpdateError(errors)
+
+        batch = None if dry_run else (batch_id or uuid.uuid4())
+        changes, adjustments, unchanged = [], [], 0
+        for product, new_price, new_stock in planned:
+            if new_price == product.price and new_stock == product.stock_quantity:
+                unchanged += 1
+                continue
+            changes.append({
+                'id': product.pk, 'sku': product.sku,
+                'display_name': product.display_name,
+                'old_price': product.price, 'new_price': new_price,
+                'old_stock': product.stock_quantity, 'new_stock': new_stock,
+            })
+            if not dry_run:
+                adjustments.append(ProductAdjustment(
+                    batch_id=batch, product=product,
+                    old_price=product.price, new_price=new_price,
+                    old_stock=product.stock_quantity, new_stock=new_stock,
+                    reason=reason,
+                ))
+                product.price = new_price
+                product.stock_quantity = new_stock
+                # auto_now fields are only refreshed if they are listed here
+                product.save(update_fields=['price', 'stock_quantity', 'updated_at'])
+
+        if adjustments:
+            ProductAdjustment.objects.bulk_create(adjustments)
+
+        return {'batch_id': batch, 'dry_run': dry_run, 'changed': len(changes),
+                'unchanged': unchanged, 'changes': changes}
 
 
 MAX_CATEGORY_DEPTH = 5
@@ -156,7 +267,8 @@ class CategoryService:
     def _height(category_id, children):
         """Levels in the branch starting at this category, counting itself."""
         return 1 + max(
-            (CategoryService._height(c, children) for c in children.get(category_id, [])),
+            (CategoryService._height(c, children)
+             for c in children.get(category_id, [])),
             default=0,
         )
 
@@ -205,7 +317,8 @@ class CategoryService:
 
     @staticmethod
     def _check_name_free(name, parent_id, exclude_pk=None):
-        siblings = Category.objects.filter(parent_id=parent_id, name__iexact=name)
+        siblings = Category.objects.filter(
+            parent_id=parent_id, name__iexact=name)
         if exclude_pk:
             siblings = siblings.exclude(pk=exclude_pk)
         if siblings.exists():
@@ -251,7 +364,8 @@ class CategoryService:
                     f"Categories can be at most {MAX_CATEGORY_DEPTH} levels deep.")
 
         if 'name' in fields or parent_id != category.parent_id:
-            CategoryService._check_name_free(name, parent_id, exclude_pk=category.pk)
+            CategoryService._check_name_free(
+                name, parent_id, exclude_pk=category.pk)
 
         for key, value in fields.items():
             setattr(category, key, value)

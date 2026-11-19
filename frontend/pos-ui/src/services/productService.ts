@@ -2,6 +2,8 @@ import client from "./api";
 import { buildParams, fromApi, toPaginated } from "./apiHelpers";
 import { variantBody } from "./productGroupService";
 import type {
+  BulkUpdateResult,
+  BulkUpdateRow,
   ListParams,
   PaginatedResponse,
   Product,
@@ -9,8 +11,6 @@ import type {
   VariantInput,
 } from "@/types";
 
-// Input is already camelCase (fromApi / toPaginated ran first). Keys inside `attributes`
-// are user-chosen names like "Size" and are intentionally left untouched.
 const normalize = (p: any): Product => ({
   ...p,
   price: Number(p.price),
@@ -40,6 +40,7 @@ export class ProductService {
       params: {
         ...buildParams(params),
         category: params.category || undefined,
+        stock_lte: params.stockLte ?? undefined,
         // the backend includes subcategories by default; only send the flag to turn that off
         include_subcategories:
           params.category && params.includeSubcategories === false
@@ -49,6 +50,44 @@ export class ProductService {
     });
     const page = toPaginated<any>(res.data, params);
     return { ...page, data: page.data.map(normalize) };
+  }
+
+  /** Dry run: omit batchId. Real run: pass the batchId generated when the review opened. */
+  static async bulkUpdate(
+    updates: BulkUpdateRow[],
+    opts: { dryRun: boolean; batchId?: string },
+  ): Promise<BulkUpdateResult> {
+    const body = {
+      dry_run: opts.dryRun,
+      ...(opts.batchId ? { batch_id: opts.batchId } : {}),
+      updates: updates.map((u) => ({
+        id: Number(u.id),
+        ...(u.price !== undefined ? { price: u.price.toFixed(2) } : {}),
+        ...(u.pricePercent !== undefined
+          ? { price_percent: String(u.pricePercent) }
+          : {}),
+        ...(u.stockQuantity !== undefined
+          ? { stock_quantity: u.stockQuantity }
+          : {}),
+        ...(u.stockChange !== undefined ? { stock_change: u.stockChange } : {}),
+      })),
+    };
+    const d = (await client.post("/products/bulk-update/", body)).data;
+    return {
+      batchId: d.batch_id ?? null,
+      dryRun: !!d.dry_run,
+      changed: d.changed,
+      unchanged: d.unchanged,
+      changes: (d.changes ?? []).map((c: any) => ({
+        id: String(c.id),
+        sku: c.sku,
+        displayName: c.display_name,
+        oldPrice: Number(c.old_price),
+        newPrice: Number(c.new_price),
+        oldStock: c.old_stock,
+        newStock: c.new_stock,
+      })),
+    };
   }
 
   static async getProduct(id: string): Promise<Product> {

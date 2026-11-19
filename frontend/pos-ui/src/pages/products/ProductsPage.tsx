@@ -25,6 +25,7 @@ import { CategoriesModal } from './CategoriesModal';
 import { ProductQrModal } from './ProductQrModal';
 import { useCategories } from './useCategories';
 import { CategorySelect } from './CategorySelect';
+import { useNavigate } from 'react-router-dom';
 
 export const ProductsPage = () => {
   const queryClient = useQueryClient();
@@ -36,6 +37,7 @@ export const ProductsPage = () => {
   const [includeSub, setIncludeSub] = useState(true);
   const [sortField, setSortField] = useState<string>();
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>();
+  const navigate = useNavigate()
 
   // modals
   const [simpleOpen, setSimpleOpen] = useState(false);
@@ -217,6 +219,9 @@ export const ProductsPage = () => {
           />
           <Button icon={<TagsOutlined />} onClick={() => setCategoriesOpen(true)}>
             Categories
+          </Button>
+          <Button icon={<EditOutlined />} onClick={() => navigate('/products/bulk')}>
+            Bulk update
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
             Add Product

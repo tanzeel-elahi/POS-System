@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     ProductListCreateView, ProductDetailView, ProductLookupView,ProductGroupListCreateView,ProductGroupDetailView,
-    CategoryListCreateView, CategoryDetailView,ProductGroupVariantsView, CategoryTreeView
+    CategoryListCreateView, CategoryDetailView,ProductGroupVariantsView, CategoryTreeView, ProductBulkUpdateView
 )
 
 urlpatterns = [
@@ -14,5 +14,6 @@ urlpatterns = [
     path('product-groups/<int:pk>/', ProductGroupDetailView.as_view(), name='product-group-detail'),
     path('product-groups/<int:pk>/variants/', ProductGroupVariantsView.as_view(), name='product-group-variants'),
     path('categories/tree/', CategoryTreeView.as_view(), name='category-tree'),
+    path('products/bulk-update/', ProductBulkUpdateView.as_view(), name='product-bulk-update'),
 
 ]

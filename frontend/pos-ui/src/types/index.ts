@@ -16,6 +16,7 @@ export interface ListParams {
   sortOrder?: "asc" | "desc";
   category?: string;
   includeSubcategories?: boolean;
+  stockLte?: number;
 }
 
 interface Audit {
@@ -200,4 +201,30 @@ export interface ProductGroupCreatePayload {
   category?: string | null;
   attributeNames: string[];
   variants: VariantInput[];
+}
+
+export interface BulkUpdateRow {
+  id: string;
+  price?: number; // set price
+  pricePercent?: number; // +10 / -5
+  stockQuantity?: number; // set exact count (stocktake only)
+  stockChange?: number; // add this number, may be negative
+}
+
+export interface BulkChange {
+  id: string;
+  sku: string;
+  displayName: string;
+  oldPrice: number;
+  newPrice: number;
+  oldStock: number;
+  newStock: number;
+}
+
+export interface BulkUpdateResult {
+  batchId: string | null; // null on a dry run
+  dryRun: boolean;
+  changed: number;
+  unchanged: number;
+  changes: BulkChange[];
 }

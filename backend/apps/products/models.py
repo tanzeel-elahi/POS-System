@@ -81,3 +81,19 @@ class Product(models.Model):
 
     def __str__(self):
         return self.name
+
+class ProductAdjustment(models.Model):
+    """One row per product changed by a bulk update (old and new values)."""
+    batch_id = models.UUIDField(db_index=True)
+    product = models.ForeignKey(
+        Product, on_delete=models.PROTECT, related_name='adjustments',
+    )
+    old_price = models.DecimalField(max_digits=10, decimal_places=2)
+    new_price = models.DecimalField(max_digits=10, decimal_places=2)
+    old_stock = models.PositiveIntegerField()
+    new_stock = models.PositiveIntegerField()
+    reason = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']

@@ -8,9 +8,9 @@ from .models import Category, Product, ProductGroup
 from .serializers import (
     CategorySerializer, ProductSerializer, ProductGroupSerializer,
     ProductGroupCreateSerializer, ProductGroupUpdateSerializer,
-    VariantInputSerializer, VariantSerializer,
+    VariantInputSerializer, VariantSerializer, BulkUpdateSerializer, BulkUpdateResultSerializer
 )
-from .services import CategoryService, ProductService, ProductGroupService
+from .services import CategoryService, ProductService, ProductGroupService, BulkUpdateError, DuplicateBatchError
 
 
 def _category_filter(request):
@@ -32,6 +32,13 @@ class ProductListCreateView(APIView):
     def get(self, request):
         products = Product.objects.filter(
             is_active=True).select_related('category', 'group')
+
+        stock_lte = request.query_params.get('stock_lte')
+        if stock_lte:
+            if not stock_lte.isdigit():
+                return Response({'detail': 'stock_lte must be a number.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            products = products.filter(stock_quantity__lte=int(stock_lte))
 
         search = request.query_params.get('search')
         if search:
@@ -267,3 +274,25 @@ class ProductGroupVariantsView(APIView):
         except ValidationError as e:
             return Response({'detail': e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
         return Response(VariantSerializer(variant).data, status=status.HTTP_201_CREATED)
+
+
+class ProductBulkUpdateView(APIView):
+    def post(self, request):
+        serializer = BulkUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            result = ProductService.bulk_update(
+                data['updates'],
+                reason=data.get('reason', ''),
+                batch_id=data.get('batch_id'),
+                dry_run=data['dry_run'],
+            )
+        except BulkUpdateError as e:
+            return Response(
+                {'detail': 'Some rows have errors. Nothing was saved.',
+                 'errors': e.errors},
+                status=status.HTTP_400_BAD_REQUEST)
+        except DuplicateBatchError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_409_CONFLICT)
+        return Response(BulkUpdateResultSerializer(result).data)

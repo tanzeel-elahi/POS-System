@@ -106,3 +106,50 @@ class ProductGroupSerializer(serializers.ModelSerializer):
         # Filter in Python so a prefetch_related('variants') is actually used.
         active = [v for v in group.variants.all() if v.is_active]
         return VariantSerializer(active, many=True).data
+
+
+
+class BulkUpdateRowSerializer(serializers.Serializer):
+    id = serializers.IntegerField(min_value=1)
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    price_percent = serializers.DecimalField(
+        max_digits=6, decimal_places=2, required=False,
+        min_value=Decimal('-99.99'), max_value=Decimal('1000'),
+    )
+    stock_quantity = serializers.IntegerField(required=False)
+    stock_change = serializers.IntegerField(required=False)
+
+    def validate(self, attrs):
+        if 'price' in attrs and 'price_percent' in attrs:
+            raise serializers.ValidationError("Send either price or price_percent, not both.")
+        if 'stock_quantity' in attrs and 'stock_change' in attrs:
+            raise serializers.ValidationError("Send either stock_quantity or stock_change, not both.")
+        if not any(k in attrs for k in
+                   ('price', 'price_percent', 'stock_quantity', 'stock_change')):
+            raise serializers.ValidationError("Nothing to change in this row.")
+        return attrs
+
+
+class BulkUpdateSerializer(serializers.Serializer):
+    updates = BulkUpdateRowSerializer(many=True, allow_empty=False, max_length=500)
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    batch_id = serializers.UUIDField(required=False)
+    dry_run = serializers.BooleanField(required=False, default=False)
+
+
+class BulkChangeSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    sku = serializers.CharField()
+    display_name = serializers.CharField()
+    old_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    new_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    old_stock = serializers.IntegerField()
+    new_stock = serializers.IntegerField()
+
+
+class BulkUpdateResultSerializer(serializers.Serializer):
+    batch_id = serializers.UUIDField(allow_null=True)
+    dry_run = serializers.BooleanField()
+    changed = serializers.IntegerField()
+    unchanged = serializers.IntegerField()
+    changes = BulkChangeSerializer(many=True)
